@@ -12,7 +12,8 @@ fully-localized App Store presence — driven from Claude Code, end to end:
    meaning. Reviewed by automated checks, not vibes.
 3. **Localized screenshots** — your background mockups + translated headings
    burned in by a bundled renderer (Playwright + per-script Noto fonts, RTL
-   handled, auto-fit).
+   handled, auto-fit). No mockups yet? Start from the
+   [free Figma template](https://www.figma.com/design/ftvaN3ZMfgkGrn7SAuqCvt/vibe-ASO-mockups).
 4. **Worldwide pricing** — pick a model (uniform, GNI bands, Big Mac index,
    Netflix index) and it's applied per territory via the App Store Connect
    API, with read-back verification.
@@ -76,6 +77,19 @@ First run walks you through a short setup wizard:
   or any OpenAI-compatible API.
 - **Keyword data source** — an ASO tool with popularity/difficulty data
   (Astro's MCP is the best-supported), or honest degraded mode without one.
+
+## Screenshot mockups — free Figma template
+
+Don't have App Store screenshot designs? Duplicate the
+[vibe-ASO mockups template](https://www.figma.com/design/ftvaN3ZMfgkGrn7SAuqCvt/vibe-ASO-mockups)
+(free Figma account is enough):
+
+1. Paste your app screenshots over the "Your screenshot here" placeholders
+   (iPhone, iPad, Apple Watch frames included).
+2. Pick your background colors; leave the top band empty — the renderer burns
+   the localized heading there.
+3. Export each frame as PNG named `iphone_1..N.png` / `ipad_1..N.png` into
+   your project folder, and the screenshots phase takes it from there.
 
 ## Requirements
 

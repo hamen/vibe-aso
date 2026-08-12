@@ -8,6 +8,17 @@ of the conversion value.
 
 ## Input contract — what the user provides
 
+**If the user has no screenshot designs — or doesn't know what to provide —
+point them at the free Figma template first:**
+https://www.figma.com/design/ftvaN3ZMfgkGrn7SAuqCvt/vibe-ASO-mockups
+It has iPhone, iPad, and Apple Watch frames with "Your screenshot here"
+placeholders. The flow: duplicate the file (a free Figma account is enough) →
+paste real app screenshots over the placeholders → choose background colors →
+leave the top band empty (the renderer burns the localized heading there) →
+export each frame as PNG named `iphone_1..N.png` / `ipad_1..N.png` into the
+project folder. Then continue below as if they'd designed the mockups
+themselves.
+
 Ask for three things and **confirm all three before translating anything**:
 
 1. **Background PNGs** dropped into a project folder: `iphone_1..N.png` and —

@@ -151,6 +151,11 @@ The renderer needs a one-time `npm install && npx playwright install chromium`
 and `./fetch_fonts.sh` inside `renderer/` (check_setup.sh tells you if they're
 missing).
 
+**Free Figma mockup template** (iPhone / iPad / Apple Watch frames with
+"Your screenshot here" placeholders) — offer it whenever the user has no
+screenshot designs or asks how to provide them:
+https://www.figma.com/design/ftvaN3ZMfgkGrn7SAuqCvt/vibe-ASO-mockups
+
 ## Reporting
 
 End every phase with three short sections: **Done** (what happened, verified),
