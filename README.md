@@ -44,7 +44,8 @@ Step 2 — install the plugin:
 /plugin install vibe-aso@vibe-aso-marketplace
 ```
 
-Then `/reload-plugins` (or restart Claude Code).
+If the install summary says `Plugin is now active.` you're done; if it says
+`Run /reload-plugins to activate.`, run that (or restart Claude Code).
 
 Or clone directly (no plugin manager):
 
@@ -78,12 +79,23 @@ First run walks you through a short setup wizard:
 
 ## Requirements
 
-- macOS with Xcode command-line tools (in-app localization builds the project)
-- `ruby` and `python3` (ship with macOS)
-- `fastlane` ≥ 2.234.0 for metadata/screenshot upload (`brew install fastlane`)
-- `node` for the screenshot renderer (one-time `npm install`,
-  `npx playwright install chromium`, and a ~55 MB font download —
-  `renderer/fetch_fonts.sh`)
+Nothing up front — each phase checks its own prerequisites
+(`scripts/check_setup.sh` prints exactly what's missing and the fix command),
+and you only need the tools for the phases you actually use:
+
+| You want | You need |
+|---|---|
+| Keyword research | nothing (an ASO data tool with popularity/difficulty makes it much stronger) |
+| Metadata generation | nothing |
+| Metadata / screenshot upload | `fastlane` ≥ 2.234.0 (`brew install fastlane`) |
+| Screenshot rendering | `node` — one-time `npm install`, `npx playwright install chromium`, ~55 MB font download |
+| Pricing + submission checklist | `ruby` (ships with macOS) |
+| In-app localization | Xcode command-line tools — it rebuilds your app to verify translations |
+
+Assumes macOS, which is where iOS apps get built anyway. Upload goes through
+fastlane because it's the community standard — but the skill writes plain
+`fastlane/metadata/<locale>/` layout files, so if you deliver with something
+else, everything up to the upload step still works as-is.
 
 ## What it costs
 

@@ -135,7 +135,9 @@ function buildHtml({ device, bgUrl, text, color, dir, faces, stack }) {
     .replaceAll("__TEXT__", escapeHtml(text));
 }
 
-const devices = (onlyDevice ? [onlyDevice] : ["iphone", "ipad"]).filter((dev) =>
+// device classes come from config.json — add one there (e.g. "watch") and
+// drop <device>_1..N.png files next to the others; no code change needed
+const devices = (onlyDevice ? [onlyDevice] : Object.keys(cfg.devices)).filter((dev) =>
   existsSync(join(appDir, `${dev}_1.png`))
 );
 const locales = onlyLocale ? [onlyLocale] : Object.keys(headings);

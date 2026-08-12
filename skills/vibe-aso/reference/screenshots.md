@@ -73,6 +73,11 @@ locale and should be tightened, not shipped tiny.
 Renderer facts worth knowing (all in `renderer/config.json` — that file is
 the source of truth for sizes; don't hardcode numbers elsewhere):
 
+- Device classes are defined in `config.json`. Shipping defaults: `iphone`
+  and `ipad`. To render another class (e.g. Apple Watch), add a config block
+  with its pixel size and band layout, name the backgrounds
+  `<device>_1..N.png`, and it renders like the others.
+
 - Auto-fit: 2 lines by default, stretching to 3 only when it buys a
   meaningfully larger font; long unbreakable words shrink instead of
   clipping.

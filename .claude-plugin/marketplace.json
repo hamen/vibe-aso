@@ -13,10 +13,7 @@
         "name": "Kronop",
         "url": "https://github.com/Kronop"
       },
-      "source": {
-        "source": "github",
-        "repo": "Kronop/vibe-aso"
-      },
+      "source": "./",
       "homepage": "https://github.com/Kronop/vibe-aso",
       "keywords": [
         "aso",
