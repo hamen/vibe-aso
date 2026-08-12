@@ -1,0 +1,21 @@
+{
+  "name": "vibe-aso",
+  "version": "0.1.0",
+  "description": "Full-funnel App Store Optimization from Claude Code — keyword research, 50-locale metadata, localized screenshots, worldwide pricing, in-app localization, and a verified submission checklist. Bring your own App Store Connect key.",
+  "author": {
+    "name": "Kronop",
+    "url": "https://github.com/Kronop"
+  },
+  "homepage": "https://github.com/Kronop/vibe-aso",
+  "license": "MIT",
+  "keywords": [
+    "aso",
+    "app-store",
+    "ios",
+    "localization",
+    "keywords",
+    "screenshots",
+    "pricing",
+    "app-store-connect"
+  ]
+}

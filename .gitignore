@@ -1,0 +1,17 @@
+# Fonts are fetched at setup time by renderer/fetch_fonts.sh — never committed.
+**/renderer/fonts/
+
+# Renderer deps
+**/node_modules
+package-lock.json
+
+# User credentials must never enter this repo (they live in ~/.vibe-aso/)
+*.p8
+config.json
+!skills/vibe-aso/renderer/config.json
+
+# OS / editor noise
+.DS_Store
+*.swp
+.idea/
+.vscode/

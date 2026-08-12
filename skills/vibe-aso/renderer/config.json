@@ -1,0 +1,13 @@
+{
+  "font": { "weight": 700, "minSizePx": 70, "lineHeight": 1.2, "maxLines": 2, "maxLinesStretch": 3, "stretchGain": 1.12 },
+  "devices": {
+    "iphone": {
+      "width": 1284, "height": 2778, "sizePx": 140,
+      "topMarginPx": 150, "bandHeightPx": 430, "sidePaddingPx": 80
+    },
+    "ipad": {
+      "width": 2064, "height": 2752, "sizePx": 140,
+      "topMarginPx": 129, "bandHeightPx": 360, "sidePaddingPx": 300
+    }
+  }
+}

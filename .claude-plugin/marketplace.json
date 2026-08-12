@@ -1,0 +1,32 @@
+{
+  "name": "vibe-aso-marketplace",
+  "description": "Vibe ASO — App Store Optimization skills for Claude Code.",
+  "owner": {
+    "name": "Kronop",
+    "url": "https://github.com/Kronop"
+  },
+  "plugins": [
+    {
+      "name": "vibe-aso",
+      "description": "You vibe-coded the app — now vibe the ASO. Keyword research, 50-locale App Store metadata, localized screenshots, worldwide pricing, in-app localization, and a verified submission checklist, end to end from Claude Code.",
+      "author": {
+        "name": "Kronop",
+        "url": "https://github.com/Kronop"
+      },
+      "source": {
+        "source": "github",
+        "repo": "Kronop/vibe-aso"
+      },
+      "homepage": "https://github.com/Kronop/vibe-aso",
+      "keywords": [
+        "aso",
+        "app-store",
+        "ios",
+        "localization",
+        "keywords",
+        "screenshots",
+        "pricing"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  __FONTFACES__
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: __W__px; height: __H__px; overflow: hidden; }
+  #stage { position: relative; width: __W__px; height: __H__px; }
+  #bg { position: absolute; top: 0; left: 0; width: __W__px; height: __H__px; display: block; }
+  #heading {
+    position: absolute;
+    top: __TOP__px;
+    left: __PAD__px;
+    right: __PAD__px;
+    max-height: __BAND__px;
+    text-align: center;
+    text-wrap: balance;
+    font-family: __FONTSTACK__;
+    font-weight: __WEIGHT__;
+    font-size: __FONT__px;
+    line-height: __LH__;
+    color: __COLOR__;
+    direction: __DIR__;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <img id="bg" src="__BG_URL__" />
+    <div id="heading">__TEXT__</div>
+  </div>
+</body>
+</html>
