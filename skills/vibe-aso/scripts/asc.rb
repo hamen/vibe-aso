@@ -58,7 +58,16 @@ METHODS = {
 }.freeze
 
 HOST = 'api.appstoreconnect.apple.com'
-DEADLINE = Integer(ENV['ASC_DEADLINE'] || 120) # total seconds for the request
+# Total seconds for the request. Validated: a non-number would raise an
+# unhandled ArgumentError, and 0 or a negative would mean "no limit at all" in
+# Timeout.timeout — silently removing the ceiling this exists to provide.
+DEADLINE = begin
+  d = Integer(ENV['ASC_DEADLINE'] || 120)
+  abort "ASC_DEADLINE must be a positive number of seconds, got #{d}" unless d.positive?
+  d
+rescue ArgumentError, TypeError
+  abort "ASC_DEADLINE must be a positive number of seconds, got #{ENV['ASC_DEADLINE'].inspect}"
+end
 
 method, path, body = ARGV[0], ARGV[1], ARGV[2]
 abort "usage: ruby asc.rb <GET|POST|PATCH|DELETE> <path> [json_body]" unless method && path

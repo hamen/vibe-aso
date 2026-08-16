@@ -135,6 +135,19 @@ check('a total deadline is enforced, not just a per-read timeout') do
   code == 2 && out.include?('request failed') && (Time.now - started) < 4
 end
 
+# 0 and negatives mean "no limit" to Timeout.timeout, which would silently
+# remove the ceiling; a non-number would raise an unhandled ArgumentError.
+check('an invalid ASC_DEADLINE is rejected instead of removing the limit') do
+  ['0', '-5', 'soon', ''].all? do |bad|
+    code, out = run(local, 'GET', '/ok', env: { 'ASC_DEADLINE' => bad })
+    code != 0 && out.include?('ASC_DEADLINE must be a positive number')
+  end
+end
+
+check('a valid ASC_DEADLINE is still honoured') do
+  run(local, 'GET', '/ok', env: { 'ASC_DEADLINE' => '30' }).first.zero?
+end
+
 # ── usage and safety ─────────────────────────────────────────────────────────
 
 puts
