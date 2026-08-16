@@ -4,9 +4,10 @@
 // is a script: the behaviour worth protecting is what it does to a project
 // directory and what it exits with, not its private helpers.
 //
-// The render cases need the one-time setup (npm install && npx playwright
-// install chromium && ./fetch_fonts.sh). They skip themselves when it is
-// missing, so the validation tests still run on a bare checkout.
+// render.js imports playwright at its first line, so `npm install` is needed
+// for ANY of this to run — without it every test skips. The render cases
+// additionally need the browser and the fonts (`npx playwright install
+// chromium` and `./fetch_fonts.sh`) and skip themselves independently.
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -21,10 +22,32 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "..");
 const RENDER = join(RENDERER, "render.js");
 
-const canRender =
-  existsSync(join(RENDERER, "node_modules", "playwright")) &&
+const hasPlaywright = existsSync(join(RENDERER, "node_modules", "playwright"));
+
+// The browser is a separate download from the package, so check the binary
+// itself — otherwise the render tests run and fail between `npm install` and
+// `npx playwright install chromium` instead of skipping.
+let hasChromium = false;
+if (hasPlaywright) {
+  try {
+    const { chromium } = await import("playwright");
+    hasChromium = existsSync(chromium.executablePath());
+  } catch {
+    hasChromium = false;
+  }
+}
+
+const hasFonts =
   existsSync(join(RENDERER, "fonts", "NotoSans.ttf")) &&
   existsSync(join(RENDERER, "fonts", "DMSans.ttf"));
+
+const needSetup = "run: npm install && npx playwright install chromium && ./fetch_fonts.sh";
+const skipAll = hasPlaywright ? false : `playwright not installed — ${needSetup}`;
+const skipRender = !hasChromium
+  ? `chromium not installed — ${needSetup}`
+  : !hasFonts
+    ? `fonts not fetched — ${needSetup}`
+    : false;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -85,7 +108,7 @@ const cleanup = (d) => rmSync(d, { recursive: true, force: true });
 
 // ── validation: must fail before touching the browser ────────────────────────
 
-describe("pre-flight validation", () => {
+describe("pre-flight validation", { skip: skipAll }, () => {
   test("locale absent from headings.json is named, not a TypeError", () => {
     const dir = project({ "en-US": ["a", "b"] });
     const { code, err } = render(dir, "iphone", "fr-FR");
@@ -159,6 +182,19 @@ describe("pre-flight validation", () => {
     cleanup(dir);
   });
 
+  // A truthy non-string passes a naive check and reaches the CSS as
+  // "[object Object]", which Chromium drops — the heading renders in the
+  // default black and the run still reports success.
+  test("a color that is not a string is refused, not silently rendered black", () => {
+    for (const odd of [{ hex: "#FFF" }, ["#FFF"], 255, true, "  "]) {
+      const dir = project({ "en-US": ["a", "b"] }, { app: { colors: { odd, even: "#000" } } });
+      const { code, err } = render(dir);
+      assert.equal(code, 1, `colors.odd = ${JSON.stringify(odd)} must be refused`);
+      assert.match(err, /non-empty strings/);
+      cleanup(dir);
+    }
+  });
+
   test("unknown device lists the known ones instead of rendering nothing", () => {
     const dir = project({ "en-US": ["a", "b"] });
     const { code, err } = render(dir, "watch");
@@ -191,7 +227,7 @@ describe("pre-flight validation", () => {
 
 // ── rendering ────────────────────────────────────────────────────────────────
 
-describe("rendering", { skip: canRender ? false : "run npm install && npx playwright install chromium && ./fetch_fonts.sh" }, () => {
+describe("rendering", { skip: skipAll || skipRender }, () => {
   test("writes one PNG per heading and exits 0", () => {
     const dir = project({ "en-US": ["First heading", "Second heading"] });
     const { code, out } = render(dir, "iphone");

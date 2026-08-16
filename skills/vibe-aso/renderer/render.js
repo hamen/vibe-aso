@@ -127,8 +127,12 @@ const readJson = (name) => {
 const headings = readJson("headings.json");
 // per-app settings: { colors: { odd, even } }. odd = screenshots 1,3,5… / even = 2,4,6…
 const appCfg = readJson("app.json");
-if (!appCfg.colors?.odd || !appCfg.colors?.even)
-  die(`app.json needs colors.odd and colors.even (e.g. {"colors":{"odd":"#FFF","even":"#1A1A1A"}})`);
+// Must be non-empty STRINGS: any truthy value passes a plain check but lands
+// in the CSS as e.g. "[object Object]", which Chromium drops silently — the
+// heading then renders in the default black and the run still reports success.
+const badColor = (v) => typeof v !== "string" || !v.trim();
+if (badColor(appCfg.colors?.odd) || badColor(appCfg.colors?.even))
+  die(`app.json needs colors.odd and colors.even as non-empty strings (e.g. {"colors":{"odd":"#FFF","even":"#1A1A1A"}})`);
 const colorFor = (i) => (i % 2 === 1 ? appCfg.colors.odd : appCfg.colors.even);
 // how many screenshots this device actually has (1,2,3,4…) — auto-detected
 const shotCount = (device) => {
