@@ -88,14 +88,22 @@ point_at = lambda do |name, at_port|
     .sub("HOST = 'api.appstoreconnect.apple.com'", "HOST = '127.0.0.1'")
     .sub('URI("https://#{HOST}#{path}")', %(URI("http://\#{HOST}:#{at_port}\#{path}")))
     .sub("uri.scheme == 'https'", "uri.scheme == 'http'")
+    .sub('uri.port == 443', "uri.port == #{at_port}")
     .sub('use_ssl: true', 'use_ssl: false'))
   path
 end
 local = point_at.call('asc_local.rb', port)
 
+# stdout and stderr are captured SEPARATELY: the contract under test says the
+# response goes to stdout and diagnostics to stderr, which a merged stream
+# cannot check.
 def run(script, *args, env: {})
-  out = IO.popen(env, ['ruby', script, *args], err: [:child, :out], &:read)
-  [$?.exitstatus, out]
+  rd, wr = IO.pipe
+  out = IO.popen(env, ['ruby', script, *args], err: wr, &:read)
+  wr.close
+  err = rd.read
+  rd.close
+  [$?.exitstatus, out, err]
 end
 
 # ── the exit contract ────────────────────────────────────────────────────────
@@ -124,23 +132,23 @@ check('a non-JSON body is printed verbatim, not swallowed') do
   out.include?('plain text')
 end
 
-check('connection refused exits 2') do
-  code, out = run(point_at.call('asc_dead.rb', 1), 'GET', '/ok')
-  code == 2 && out.include?('request failed')
+check('connection refused exits 2, reporting on stderr') do
+  code, out, err = run(point_at.call('asc_dead.rb', 1), 'GET', '/ok')
+  code == 2 && err.include?('request failed') && out.empty?
 end
 
 check('a total deadline is enforced, not just a per-read timeout') do
   started = Time.now
-  code, out = run(local, 'GET', '/slow', env: { 'ASC_DEADLINE' => '1' })
-  code == 2 && out.include?('request failed') && (Time.now - started) < 4
+  code, _out, err = run(local, 'GET', '/slow', env: { 'ASC_DEADLINE' => '1' })
+  code == 2 && err.include?('request failed') && (Time.now - started) < 4
 end
 
 # 0 and negatives mean "no limit" to Timeout.timeout, which would silently
 # remove the ceiling; a non-number would raise an unhandled ArgumentError.
 check('an invalid ASC_DEADLINE is rejected instead of removing the limit') do
   ['0', '-5', 'soon', ''].all? do |bad|
-    code, out = run(local, 'GET', '/ok', env: { 'ASC_DEADLINE' => bad })
-    code != 0 && out.include?('ASC_DEADLINE must be a positive number')
+    code, _out, err = run(local, 'GET', '/ok', env: { 'ASC_DEADLINE' => bad })
+    code == 1 && err.include?('ASC_DEADLINE must be a positive number')
   end
 end
 
@@ -154,35 +162,42 @@ puts
 puts 'asc.rb — usage and safety'
 
 check('an unsupported method is rejected by name') do
-  code, out = run(local, 'FROB', '/ok')
-  code != 0 && out.include?('unsupported method FROB')
+  code, _out, err = run(local, 'FROB', '/ok')
+  code == 1 && err.include?('unsupported method FROB')
 end
 
 check('lowercase methods are accepted') { run(local, 'get', '/ok').first.zero? }
 
 check('a malformed path aborts cleanly, with no backtrace') do
-  code, out = run(local, 'GET', '//bad host')
-  code != 0 && out.include?('bad path') && !out.include?('URI::InvalidURIError:')
+  code, _out, err = run(local, 'GET', '//bad host')
+  code == 1 && err.include?('bad path') && !err.include?('URI::InvalidURIError:')
 end
 
 check('missing arguments print usage') do
-  code, out = run(local)
-  code != 0 && out.include?('usage: ruby asc.rb')
+  code, _out, err = run(local)
+  code == 1 && err.include?('usage: ruby asc.rb')
 end
 
 # The important one. The path is interpolated into the URL, so "@host/..."
 # reparents the request onto another host — and the Authorization header is a
 # live signed ASC token.
 check('a path starting with @ cannot redirect the token to another host') do
-  code, out = run(ASC, 'GET', '@127.0.0.1:%d/v1/apps' % port)
-  code != 0 && out.include?('refusing to send credentials') && seen.none? { |p| p.include?('/v1/apps') }
+  code, _out, err = run(ASC, 'GET', '@127.0.0.1:%d/v1/apps' % port)
+  code == 1 && err.include?("must start with '/'") && seen.none? { |p| p.include?('/v1/apps') }
 end
 
-check('no request reached the impostor host') { seen.none? { |p| p.include?('/v1/apps') } }
+# ":444/v1/apps" keeps Apple's hostname but moves the request to a different
+# listener, so a host-only check would wave it through.
+check('a path that changes the port cannot redirect the token') do
+  code, _out, err = run(ASC, 'GET', ":#{port}/v1/apps")
+  code == 1 && err.include?("must start with '/'") && seen.none? { |p| p.include?('/v1/apps') }
+end
+
+check('no request reached the impostor host or port') { seen.none? { |p| p.include?('/v1/apps') } }
 
 check('a missing private key aborts before any request') do
-  code, out = run(local, 'GET', '/ok', env: { 'ASC_P8' => File.join(work, 'nope.p8') })
-  code != 0 && out.include?('private key not found')
+  code, _out, err = run(local, 'GET', '/ok', env: { 'ASC_P8' => File.join(work, 'nope.p8') })
+  code == 1 && err.include?('private key not found')
 end
 
 check('the key material is never printed') do

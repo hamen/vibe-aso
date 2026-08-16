@@ -81,8 +81,12 @@ end
 # "@evil.example/v1/apps" parses with host evil.example and userinfo
 # api.appstoreconnect.apple.com — and the Bearer below is a LIVE signed ASC
 # token. Refuse anything that did not stay on Apple's host over TLS.
-unless uri.scheme == 'https' && uri.host == HOST && uri.userinfo.nil?
-  abort "refusing to send credentials to #{uri.scheme}://#{uri.host} — path must start with '/'"
+# The port matters too: ":444/v1/apps" keeps the host but moves the request to
+# another listener. Requiring a leading '/' rules out both that and the '@'
+# form before the URL is even built.
+abort "path must start with '/', got #{path.inspect}" unless path.start_with?('/')
+unless uri.scheme == 'https' && uri.host == HOST && uri.port == 443 && uri.userinfo.nil?
+  abort "refusing to send credentials to #{uri.scheme}://#{uri.host}:#{uri.port} — path must start with '/'"
 end
 
 req = klass.new(uri)
