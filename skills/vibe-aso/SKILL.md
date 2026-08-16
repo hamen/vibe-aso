@@ -2,12 +2,6 @@
 name: vibe-aso
 description: Full-funnel App Store Optimization for an iOS app — keyword research (popularity/difficulty driven), a keyword-led name/subtitle/keyword field, App Store metadata localized into up to 50 locales, localized screenshot headings burned over your mockups, worldwide territory pricing, and in-app string localization. Use when the user wants to "do the ASO", "find keywords", "localize my app / my App Store page / my screenshots", "pick a name and subtitle", "set worldwide prices", or is preparing an App Store submission.
 user-invocable: true
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Bash
-  - AskUserQuestion
 ---
 
 # Vibe ASO — the whole App Store funnel, from Claude Code
