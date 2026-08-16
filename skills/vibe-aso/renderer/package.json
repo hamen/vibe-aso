@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "version": "1.0.0",
+  "scripts": {
+    "test": "node --test test/render.test.mjs"
+  },
   "dependencies": {
     "playwright": "^1.60.0"
   }

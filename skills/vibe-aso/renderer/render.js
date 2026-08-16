@@ -66,12 +66,15 @@ const fontPath = (family) => join(__dirname, "fonts", FONTS[family]);
 // first, per-glyph fallback pulls only those letters from Noto Sans, so a
 // single Vietnamese word renders in two typefaces ("Theo dõi từng calo" mixes
 // mid-word). Every other Latin locale in the phase-2 set is fully covered.
-const NO_DM_SANS = new Set(["vi"]);
+// Matched by language subtag, so "vi-VN" is covered as well as bare "vi".
+const NO_DM_SANS = ["vi"];
+const skipsDmSans = (locale) =>
+  NO_DM_SANS.some((l) => locale === l || locale.startsWith(l + "-"));
 
 function fontFamilies(locale) {
   // DM Sans first (Latin/brand), then the locale's script font (so it wins over
   // Noto Sans for shared scripts like Cyrillic), then Noto Sans as final safety net.
-  const stack = NO_DM_SANS.has(locale) ? [] : ["DM Sans"];
+  const stack = skipsDmSans(locale) ? [] : ["DM Sans"];
   if (LOCALE_FONT[locale]) stack.push(LOCALE_FONT[locale]);
   stack.push("Noto Sans");
   return stack;
@@ -108,11 +111,17 @@ const appDir = resolve(projectArg);
 const readJson = (name) => {
   const p = join(appDir, name);
   if (!existsSync(p)) die(`missing ${name} in ${appDir} — see reference/screenshots.md`);
+  let parsed;
   try {
-    return JSON.parse(readFileSync(p, "utf8"));
+    parsed = JSON.parse(readFileSync(p, "utf8"));
   } catch (e) {
     die(`${name} is not valid JSON: ${e.message}`);
   }
+  // `null` and `[1,2]` are valid JSON but not valid here, and reach property
+  // access as a TypeError several dozen lines away from the real cause
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    die(`${name} must be a JSON object, got ${parsed === null ? "null" : Array.isArray(parsed) ? "an array" : typeof parsed}`);
+  return parsed;
 };
 
 const headings = readJson("headings.json");
@@ -224,41 +233,61 @@ if (missingFonts.length)
 if (problems.length) die("headings.json / setup problems:\n  - " + problems.join("\n  - "));
 
 const browser = await chromium.launch();
-let count = 0;
+let count = 0; // screenshots successfully written
+let nav = 0; // navigations attempted — advances even when an image fails
 const failures = [];
 
 // One page for the whole run instead of one per screenshot, and every asset
 // served from disk through the route below rather than inlined in the HTML.
-const page = await browser.newPage({ deviceScaleFactor: 1 });
 let pendingHtml = "";
 // Assets that failed to load for the image currently being rendered. A throw
 // inside a route handler escapes the per-image try/catch below (Playwright
 // dispatches it outside that stack) and takes the whole process down, so the
 // handler records instead of throwing and the render step checks after goto.
 let assetErrors = [];
-await page.route(`${ORIGIN}/**`, async (route) => {
-  const path = decodeURIComponent(new URL(route.request().url()).pathname);
+// read once, not per navigation — the CJK files are 10-17 MB each
+const fileCache = new Map();
+const cachedRead = (p) => {
+  if (!fileCache.has(p)) fileCache.set(p, readFileSync(p));
+  return fileCache.get(p);
+};
+const routeHandler = async (route) => {
+  let path = "(unparsed)";
   try {
+    path = decodeURIComponent(new URL(route.request().url()).pathname);
     if (path === "/")
       return await route.fulfill({ contentType: "text/html; charset=utf-8", body: pendingHtml });
     if (path.startsWith("/fonts/"))
       return await route.fulfill({
         contentType: "font/ttf",
-        body: readFileSync(join(__dirname, "fonts", basename(path))),
+        headers: { "Cache-Control": "max-age=3600" },
+        body: cachedRead(join(__dirname, "fonts", basename(path))),
       });
     if (path.startsWith("/bg/"))
       return await route.fulfill({
         contentType: "image/png",
-        body: readFileSync(join(appDir, basename(path))),
+        headers: { "Cache-Control": "max-age=3600" },
+        body: cachedRead(join(appDir, basename(path))),
       });
-    assetErrors.push(`unexpected request ${path}`);
+    // Anything else is a browser-initiated extra (/favicon.ico is the usual
+    // one). It is not an asset this render depends on, so 404 it quietly —
+    // recording it would fail every screenshot for a resource we never asked
+    // the page to load.
+    return await route.fulfill({ status: 404, body: "" });
   } catch (e) {
     // a missing or unreadable asset must fail this image loudly, never render
     // a screenshot that is silently missing its background or its font
     assetErrors.push(`${path}: ${e.message.split("\n")[0]}`);
   }
   await route.abort().catch(() => {});
-});
+};
+
+const newRenderPage = async () => {
+  const p = await browser.newPage({ deviceScaleFactor: 1 });
+  await p.route(`${ORIGIN}/**`, routeHandler);
+  return p;
+};
+let page = await newRenderPage();
 
 for (const locale of locales) {
   const texts = headings[locale];
@@ -269,70 +298,81 @@ for (const locale of locales) {
     const outDir = join(appDir, "out", locale);
     mkdirSync(outDir, { recursive: true });
     for (let i = 1; i <= shots[device]; i++) {
-     try {
-      const color = colorFor(i);
-      const text = texts[i - 1];
-      assetErrors = [];
-      await page.setViewportSize({ width: d.width, height: d.height });
-      pendingHtml = buildHtml({
-        device, bgUrl: `${ORIGIN}/bg/${device}_${i}.png`, text, color, dir, faces, stack,
-      });
-      // cache-busting query so each image is a fresh navigation on one page
-      await page.goto(`${ORIGIN}/?n=${count}`, { waitUntil: "load" });
-      if (assetErrors.length) throw new Error(assetErrors.join("; "));
-      await page.evaluate(async () => {
-        await document.fonts.ready;
-        await Promise.all(
-          Array.from(document.images).map((img) =>
-            img.complete ? null : new Promise((r) => (img.onload = img.onerror = r))
-          )
-        );
-      });
-      // auto-fit: default 2 lines; stretch to 3 only when it buys a much bigger font.
-      const fit = await page.evaluate(
-        ({ base, min, lh, band, maxLines, maxLinesStretch, gain }) => {
-          const h = document.getElementById("heading");
-          // largest size <= base that fits `cap` lines within the band AND
-          // does not overflow horizontally (long unbreakable words)
-          const fitsWidth = () => h.scrollWidth <= h.clientWidth + 1;
-          const best = (cap) => {
-            for (let size = base; size >= min; size -= 2) {
-              h.style.fontSize = size + "px";
-              const lines = Math.round(h.scrollHeight / (size * lh));
-              if (lines <= cap && h.scrollHeight <= band && fitsWidth()) return { size, lines };
+      try {
+        const color = colorFor(i);
+        const text = texts[i - 1];
+        assetErrors = [];
+        await page.setViewportSize({ width: d.width, height: d.height });
+        pendingHtml = buildHtml({
+          device, bgUrl: `${ORIGIN}/bg/${device}_${i}.png`, text, color, dir, faces, stack,
+        });
+        // cache-busting query so each image is a fresh navigation on one page.
+        // MUST advance on failures too — reusing a URL after a failed image can
+        // serve the previous document and save it under the next image's name.
+        await page.goto(`${ORIGIN}/?n=${nav++}`, { waitUntil: "load" });
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await Promise.all(
+            Array.from(document.images).map((img) =>
+              img.complete ? null : new Promise((r) => (img.onload = img.onerror = r))
+            )
+          );
+        });
+        // Checked only AFTER document.fonts.ready: a font request that fails
+        // late would otherwise be recorded after an earlier check and the
+        // screenshot would be saved in a fallback typeface without complaint.
+        if (assetErrors.length) throw new Error(assetErrors.join("; "));
+        // auto-fit: default 2 lines; stretch to 3 only when it buys a much bigger font.
+        const fit = await page.evaluate(
+          ({ base, min, lh, band, maxLines, maxLinesStretch, gain }) => {
+            const h = document.getElementById("heading");
+            // largest size <= base that fits `cap` lines within the band AND
+            // does not overflow horizontally (long unbreakable words)
+            const fitsWidth = () => h.scrollWidth <= h.clientWidth + 1;
+            const best = (cap) => {
+              for (let size = base; size >= min; size -= 2) {
+                h.style.fontSize = size + "px";
+                const lines = Math.round(h.scrollHeight / (size * lh));
+                if (lines <= cap && h.scrollHeight <= band && fitsWidth()) return { size, lines };
+              }
+              h.style.fontSize = min + "px";
+              return { size: min, lines: Math.round(h.scrollHeight / (min * lh)) };
+            };
+            const two = best(maxLines);
+            let chosen = two;
+            // only consider more lines if 2 lines forced a shrink below base
+            if (two.size < base) {
+              const more = best(maxLinesStretch);
+              if (more.size >= two.size * gain) chosen = more;
             }
-            h.style.fontSize = min + "px";
-            return { size: min, lines: Math.round(h.scrollHeight / (min * lh)) };
-          };
-          const two = best(maxLines);
-          let chosen = two;
-          // only consider more lines if 2 lines forced a shrink below base
-          if (two.size < base) {
-            const more = best(maxLinesStretch);
-            if (more.size >= two.size * gain) chosen = more;
+            h.style.fontSize = chosen.size + "px";
+            return chosen;
+          },
+          {
+            base: d.sizePx, min: cfg.font.minSizePx, lh: cfg.font.lineHeight, band: d.bandHeightPx,
+            maxLines: cfg.font.maxLines, maxLinesStretch: cfg.font.maxLinesStretch, gain: cfg.font.stretchGain,
           }
-          h.style.fontSize = chosen.size + "px";
-          return chosen;
-        },
-        {
-          base: d.sizePx, min: cfg.font.minSizePx, lh: cfg.font.lineHeight, band: d.bandHeightPx,
-          maxLines: cfg.font.maxLines, maxLinesStretch: cfg.font.maxLinesStretch, gain: cfg.font.stretchGain,
+        );
+        await page.screenshot({
+          path: join(outDir, `${device}_${i}.png`),
+          clip: { x: 0, y: 0, width: d.width, height: d.height },
+        });
+        count++;
+        const flag = fit.size < d.sizePx ? `  (shrunk from ${d.sizePx})` : "";
+        // streamed, not buffered to the end — a run that dies partway used to
+        // take every fit measurement it had already made down with it
+        console.log(`  ${locale}/${device}_${i}: ${fit.size}px · ${fit.lines} lines${flag}`);
+      } catch (e) {
+        // one bad image must not cost the other 49 locales their render
+        failures.push(`${locale}/${device}_${i}: ${e.message.split("\n")[0]}`);
+        console.log(`  ${locale}/${device}_${i}: FAILED — ${e.message.split("\n")[0]}`);
+        // one page serves the whole run, so if it died (renderer crash, OOM on
+        // a large font) every later image would fail too — rebuild it
+        if (page.isClosed()) {
+          page = await newRenderPage();
+          console.log(`  (page crashed — rebuilt, continuing)`);
         }
-      );
-      await page.screenshot({
-        path: join(outDir, `${device}_${i}.png`),
-        clip: { x: 0, y: 0, width: d.width, height: d.height },
-      });
-      count++;
-      const flag = fit.size < d.sizePx ? `  (shrunk from ${d.sizePx})` : "";
-      // streamed, not buffered to the end — a run that dies partway used to
-      // take every fit measurement it had already made down with it
-      console.log(`  ${locale}/${device}_${i}: ${fit.size}px · ${fit.lines} lines${flag}`);
-     } catch (e) {
-      // one bad image must not cost the other 49 locales their render
-      failures.push(`${locale}/${device}_${i}: ${e.message.split("\n")[0]}`);
-      console.log(`  ${locale}/${device}_${i}: FAILED — ${e.message.split("\n")[0]}`);
-     }
+      }
     }
   }
 }
