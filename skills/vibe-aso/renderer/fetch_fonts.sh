@@ -19,9 +19,11 @@ is_font() { # $1 = path — true if the file is a COMPLETE sfnt font
   # which would leave the magic unmatched and reject a perfectly good font
   local magic size n i off len end max=0
   magic=$(od -An -tx1 -N4 "$1" | tr -cd '0-9a-fA-F' | tr 'A-F' 'a-f')
+  # Collections (ttcf) have a different layout and this script never fetches
+  # one, so they are rejected rather than waved through on the magic alone —
+  # a 4-byte "ttcf" file would otherwise be cached forever as a valid font.
   case "$magic" in
     00010000|4f54544f|74727565) ;;
-    74746366) return 0 ;;  # font collection: different layout, magic is enough
     *) return 1 ;;
   esac
   # Checking the magic alone is not enough. curl writes sequentially, so a
@@ -50,8 +52,15 @@ fetch() { # $1 = repo path, $2 = local filename
   if is_font "$DIR/$2"; then echo "  ✓ $2 (cached)"; return; fi
   echo "  ↓ $2"
   # write to a temp name and rename only after the check, so an interrupted
-  # run never leaves a half file in place of a good one
-  curl -fsSL --retry 3 --retry-delay 2 "$BASE/$1" -o "$DIR/$2.part"
+  # run never leaves a half file in place of a good one. curl's failure is
+  # handled here rather than left to `set -e`: a transfer that writes part of
+  # the body and THEN fails would otherwise abort the script with the .part
+  # file still on disk.
+  if ! curl -fsSL --retry 3 --retry-delay 2 "$BASE/$1" -o "$DIR/$2.part"; then
+    rm -f "$DIR/$2.part"
+    echo "  ✗ $2 — download failed" >&2
+    exit 1
+  fi
   if ! is_font "$DIR/$2.part"; then
     rm -f "$DIR/$2.part"
     echo "  ✗ $2 — download did not produce a font file" >&2

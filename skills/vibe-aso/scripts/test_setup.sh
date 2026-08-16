@@ -96,19 +96,48 @@ echo "fetch_fonts.sh — download"
 FONTDIR="$WORK/fonts"; mkdir -p "$FONTDIR"
 make_font "$FONTDIR/Keep.ttf"
 before=$(wc -c < "$FONTDIR/Keep.ttf")
-stub curl 'exit 22'   # curl -f on a 404
-out=$(
-  eval "$(sed -n '/^be()/,/^}/p;/^is_font()/,/^}/p;/^fetch()/,/^}/p' "$FETCH")"
-  DIR="$FONTDIR"; BASE="http://example.invalid"
-  PATH="$WORK/bin:$PATH"
-  set -e
-  fetch "nope/Missing.ttf" "Missing.ttf" 2>&1 || echo "(fetch failed as expected)"
-)
+
+# Run fetch() the way fetch_fonts.sh really runs it: `set -e` at top level and
+# the call NOT inside a `||` list. Putting the call in a condition would switch
+# `set -e` off for everything inside the function and hide exactly the bug
+# this checks for.
+try_fetch() { # $1 = remote path, $2 = local name — prints nothing, returns status
+  bash -c '
+    set -euo pipefail
+    eval "$(sed -n "/^be()/,/^}/p;/^is_font()/,/^}/p;/^fetch()/,/^}/p" "$1")"
+    DIR="$2"; BASE="http://example.invalid"
+    fetch "$3" "$4"
+  ' _ "$FETCH" "$FONTDIR" "$1" "$2" >/dev/null 2>&1
+}
+
+# 1. curl fails outright (404 / -f), writing nothing.
+stub curl 'exit 22'
+PATH="$WORK/bin:$PATH" try_fetch "nope/Missing.ttf" "Missing.ttf"
 [ ! -e "$FONTDIR/Missing.ttf.part" ] && ok "a failed download leaves no .part behind" \
   || bad "a failed download leaves no .part behind"
+
+# 2. The case the previous test could not see: curl writes PART of the body and
+# then exits non-zero, which is what a dropped connection actually looks like.
+stub curl 'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && { printf "\x00\x01\x00\x00partial" > "$2"; }; shift; done; exit 18'
+PATH="$WORK/bin:$PATH" try_fetch "nope/Partial.ttf" "Partial.ttf"
+[ ! -e "$FONTDIR/Partial.ttf.part" ] && ok "a partial download leaves no .part behind" \
+  || bad "a partial download leaves no .part behind"
+[ ! -e "$FONTDIR/Partial.ttf" ] && ok "a partial download is never promoted to a real font" \
+  || bad "a partial download is never promoted to a real font"
+
+# 3. curl "succeeds" but the payload is not a font (a captive-portal HTML page).
+stub curl 'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && { printf "<html>login</html>" > "$2"; }; shift; done; exit 0'
+PATH="$WORK/bin:$PATH" try_fetch "nope/Html.ttf" "Html.ttf"
+[ ! -e "$FONTDIR/Html.ttf" ] && ok "a non-font payload is rejected, not cached" \
+  || bad "a non-font payload is rejected, not cached"
+
 [ "$(wc -c < "$FONTDIR/Keep.ttf")" = "$before" ] && ok "a failed download does not touch existing fonts" \
   || bad "a failed download does not touch existing fonts"
 rm -f "$WORK/bin/curl"
+
+# A four-byte "ttcf" file must not pass as a complete font collection.
+printf 'ttcf' > "$WORK/stub.ttc"
+is_font "$WORK/stub.ttc" && bad "rejects a bare ttcf header" || ok "rejects a bare ttcf header"
 
 echo
 echo "check_setup.sh — fastlane version parse"
