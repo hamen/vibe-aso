@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 import { readFileSync, existsSync, mkdirSync, accessSync, constants } from "fs";
 import { fileURLToPath } from "url";
-import { basename, dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve, sep } from "path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -130,9 +130,15 @@ const appCfg = readJson("app.json");
 // Must be non-empty STRINGS: any truthy value passes a plain check but lands
 // in the CSS as e.g. "[object Object]", which Chromium drops silently — the
 // heading then renders in the default black and the run still reports success.
-const badColor = (v) => typeof v !== "string" || !v.trim();
+// It is also interpolated straight into a `color:` declaration, so a value
+// carrying ; { } or a newline can close that rule and rewrite the rest of the
+// stylesheet. Keep it to something that can only be a colour token.
+const badColor = (v) => typeof v !== "string" || !v.trim() || /[;{}<>\n\r]/.test(v);
 if (badColor(appCfg.colors?.odd) || badColor(appCfg.colors?.even))
-  die(`app.json needs colors.odd and colors.even as non-empty strings (e.g. {"colors":{"odd":"#FFF","even":"#1A1A1A"}})`);
+  die(
+    `app.json needs colors.odd and colors.even as non-empty strings with no ; { } or newlines ` +
+      `(e.g. {"colors":{"odd":"#FFF","even":"#1A1A1A"}})`
+  );
 const colorFor = (i) => (i % 2 === 1 ? appCfg.colors.odd : appCfg.colors.even);
 // how many screenshots this device actually has (1,2,3,4…) — auto-detected
 const shotCount = (device) => {
@@ -198,7 +204,14 @@ const shots = Object.fromEntries(devices.map((dev) => [dev, shotCount(dev)]));
 // silently rendered a blank band, which is the worst outcome of the three
 // because the screenshot looks fine until it is on the store.
 const problems = [];
+const outRoot = join(appDir, "out");
 for (const locale of locales) {
+  // Locale names become directory names. "../.." would climb out of out/ and
+  // could overwrite the user's own source backgrounds next to it.
+  if (!/^[A-Za-z0-9._-]+$/.test(locale) || locale === "." || locale === "..")
+    problems.push(`${locale}: not a usable locale name (letters, digits, dot, dash, underscore only)`);
+  else if (!resolve(outRoot, locale).startsWith(resolve(outRoot) + sep))
+    problems.push(`${locale}: would write outside ${outRoot}`);
   const texts = headings[locale];
   if (texts === undefined) {
     problems.push(`${locale}: not in headings.json (has: ${Object.keys(headings).join(", ")})`);
@@ -300,9 +313,11 @@ for (const locale of locales) {
   for (const device of devices) {
     const d = cfg.devices[device];
     const outDir = join(appDir, "out", locale);
-    mkdirSync(outDir, { recursive: true });
     for (let i = 1; i <= shots[device]; i++) {
       try {
+        // inside the per-image handler: a locale whose directory cannot be
+        // created must cost that locale, not the whole run
+        mkdirSync(outDir, { recursive: true });
         const color = colorFor(i);
         const text = texts[i - 1];
         assetErrors = [];
@@ -314,14 +329,22 @@ for (const locale of locales) {
         // MUST advance on failures too — reusing a URL after a failed image can
         // serve the previous document and save it under the next image's name.
         await page.goto(`${ORIGIN}/?n=${nav++}`, { waitUntil: "load" });
-        await page.evaluate(async () => {
+        const broken = await page.evaluate(async () => {
           await document.fonts.ready;
           await Promise.all(
             Array.from(document.images).map((img) =>
               img.complete ? null : new Promise((r) => (img.onload = img.onerror = r))
             )
           );
+          // `complete` is true after a FAILED load too, and the handler above
+          // resolves either way — a readable but corrupt PNG would otherwise
+          // screenshot cleanly with no background and report success.
+          // naturalWidth is 0 only when the image did not decode.
+          return Array.from(document.images)
+            .filter((img) => !img.naturalWidth)
+            .map((img) => img.src.replace(/^.*\//, ""));
         });
+        if (broken.length) throw new Error(`background did not decode: ${broken.join(", ")}`);
         // Checked only AFTER document.fonts.ready: a font request that fails
         // late would otherwise be recorded after an earlier check and the
         // screenshot would be saved in a fallback typeface without complaint.

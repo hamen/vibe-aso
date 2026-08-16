@@ -195,6 +195,29 @@ describe("pre-flight validation", { skip: skipAll }, () => {
     }
   });
 
+  // Locale names become directory names under out/. "../.." would climb out
+  // and could overwrite the user's own source backgrounds sitting next to it.
+  test("a locale name that would escape out/ is refused", () => {
+    for (const loc of ["../../escaped", "../evil", "a/b", "."]) {
+      const dir = project({ [loc]: ["a", "b"] });
+      const { code, err } = render(dir);
+      assert.equal(code, 1, `locale ${JSON.stringify(loc)} must be refused`);
+      assert.match(err, /not a usable locale name|would write outside/);
+      assert.ok(!existsSync(join(dir, "out")), "nothing may be written");
+      cleanup(dir);
+    }
+  });
+
+  test("a color carrying CSS punctuation is refused", () => {
+    for (const odd of ["red; } body { display:none", "#FFF\n}", "blue}"]) {
+      const dir = project({ "en-US": ["a", "b"] }, { app: { colors: { odd, even: "#000" } } });
+      const { code, err } = render(dir);
+      assert.equal(code, 1, `colors.odd = ${JSON.stringify(odd)} must be refused`);
+      assert.match(err, /no ; \{ \} or newlines/);
+      cleanup(dir);
+    }
+  });
+
   test("unknown device lists the known ones instead of rendering nothing", () => {
     const dir = project({ "en-US": ["a", "b"] });
     const { code, err } = render(dir, "watch");
@@ -267,6 +290,23 @@ describe("rendering", { skip: skipAll || skipRender }, () => {
     const a = readFileSync(join(dir, "out", "en-US", "iphone_1.png"));
     const b = readFileSync(join(dir, "out", "de-DE", "iphone_1.png"));
     assert.ok(a.equals(b), "same text, same Latin stack, so the images must match");
+    cleanup(dir);
+  });
+
+  // A PNG that opens fine but does not decode. img.complete is true after a
+  // failed load and the load handler resolves either way, so without a
+  // naturalWidth check this screenshots cleanly with no background and exits 0.
+  test("a readable but corrupt background fails instead of rendering blank", () => {
+    const dir = project({ "en-US": ["one", "two"] });
+    const good = readFileSync(join(dir, "iphone_1.png"));
+    // keep the PNG signature so it is readable and looks like an image
+    writeFileSync(join(dir, "iphone_2.png"), Buffer.concat([good.subarray(0, 8), Buffer.from("corrupt")]));
+    const { code, out, err } = render(dir, "iphone");
+    assert.equal(code, 1, "a background that did not decode must not report success");
+    assert.match(out, /iphone_2: FAILED/);
+    assert.match(out, /did not decode/);
+    assert.match(out, /iphone_1: \d+px/, "the healthy image must still render");
+    assert.match(err, /do not upload this set/);
     cleanup(dir);
   });
 
