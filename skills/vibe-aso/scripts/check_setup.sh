@@ -88,9 +88,11 @@ case "$ENGINE" in
       if [ "$ENGINE" = "deepseek" ]; then
         # a valid key on an empty account fails every call with HTTP 402 —
         # check the balance BEFORE a long run, not during one
-        # the key goes in on stdin, never on the command line — an argv
-        # header is readable by any local user via `ps`
-        bal=$(printf 'Authorization: Bearer %s\n' "$(cat "$KEY_PATH")" |
+        # the key goes in on stdin, never on an argv — a header passed as
+        # `-H "Authorization: Bearer $(cat …)"` is readable by any local user
+        # via `ps`. The key is never an argument to anything here, not even
+        # to printf, so this holds whether or not printf is a shell builtin.
+        bal=$({ printf 'Authorization: Bearer '; tr -d '\n' < "$KEY_PATH"; printf '\n'; } |
           curl -s -m 10 -H @- https://api.deepseek.com/user/balance 2>/dev/null)
         if echo "$bal" | grep -q '"is_available":true'; then
           pass "DeepSeek balance available"
