@@ -52,7 +52,9 @@ Or clone directly (no plugin manager):
 
 ```bash
 git clone https://github.com/Kronop/vibe-aso /tmp/vibe-aso
-cp -R /tmp/vibe-aso/skills/vibe-aso ~/.claude/skills/vibe-aso
+mkdir -p ~/.claude/skills
+rm -rf ~/.claude/skills/vibe-aso
+cp -R /tmp/vibe-aso/skills/vibe-aso ~/.claude/skills/
 ```
 
 ## Use
