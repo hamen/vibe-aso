@@ -8,10 +8,65 @@ DIR="$(cd "$(dirname "$0")" && pwd)/fonts"
 mkdir -p "$DIR"
 BASE="https://raw.githubusercontent.com/google/fonts/main/ofl"
 
+be() { # $1 = file, $2 = byte offset, $3 = width — read a big-endian integer
+  od -An -tu1 -j "$2" -N "$3" "$1" |
+    awk '{ v = 0; for (i = 1; i <= NF; i++) v = v * 256 + $i } END { print v + 0 }'
+}
+
+is_font() { # $1 = path — true if the file is a COMPLETE sfnt font
+  [ -s "$1" ] || return 1
+  # `tr -cd` rather than `tr -d ' \n'`: some od implementations pad with tabs,
+  # which would leave the magic unmatched and reject a perfectly good font
+  local magic size n i off len end max=0
+  magic=$(od -An -tx1 -N4 "$1" | tr -cd '0-9a-fA-F' | tr 'A-F' 'a-f')
+  # Collections (ttcf) have a different layout and this script never fetches
+  # one, so they are rejected rather than waved through on the magic alone —
+  # a 4-byte "ttcf" file would otherwise be cached forever as a valid font.
+  case "$magic" in
+    00010000|4f54544f|74727565) ;;
+    *) return 1 ;;
+  esac
+  # Checking the magic alone is not enough. curl writes sequentially, so a
+  # download interrupted partway leaves a file that still STARTS with a valid
+  # header — the exact case this guard exists for. Walk the table directory
+  # and require the file to actually contain every table it declares.
+  size=$(wc -c < "$1" | tr -d ' ')
+  n=$(be "$1" 4 2)
+  [ "$n" -gt 0 ] 2>/dev/null || return 1
+  [ "$size" -ge $((12 + 16 * n)) ] || return 1
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    off=$(be "$1" $((12 + 16 * i + 8)) 4)
+    len=$(be "$1" $((12 + 16 * i + 12)) 4)
+    end=$((off + len))
+    [ "$end" -gt "$max" ] && max=$end
+    i=$((i + 1))
+  done
+  [ "$size" -ge "$max" ]
+}
+
 fetch() { # $1 = repo path, $2 = local filename
-  if [ -s "$DIR/$2" ]; then echo "  ✓ $2 (cached)"; return; fi
+  # An interrupted download leaves a short file that is still non-empty, so
+  # "cached" has to mean "starts with a font header", not "exists" — otherwise
+  # a truncated TTF is cached forever and the renderer fails on it later.
+  if is_font "$DIR/$2"; then echo "  ✓ $2 (cached)"; return; fi
   echo "  ↓ $2"
-  curl -fsSL "$BASE/$1" -o "$DIR/$2"
+  # write to a temp name and rename only after the check, so an interrupted
+  # run never leaves a half file in place of a good one. curl's failure is
+  # handled here rather than left to `set -e`: a transfer that writes part of
+  # the body and THEN fails would otherwise abort the script with the .part
+  # file still on disk.
+  if ! curl -fsSL --retry 3 --retry-delay 2 "$BASE/$1" -o "$DIR/$2.part"; then
+    rm -f "$DIR/$2.part"
+    echo "  ✗ $2 — download failed" >&2
+    exit 1
+  fi
+  if ! is_font "$DIR/$2.part"; then
+    rm -f "$DIR/$2.part"
+    echo "  ✗ $2 — download did not produce a font file" >&2
+    exit 1
+  fi
+  mv -f "$DIR/$2.part" "$DIR/$2"
 }
 
 fetch "dmsans/DMSans%5Bopsz,wght%5D.ttf"                          "DMSans.ttf"

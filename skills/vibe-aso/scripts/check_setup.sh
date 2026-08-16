@@ -11,6 +11,18 @@ pass() { echo "  PASS  $1"; }
 warn() { echo "  WARN  $1"; }
 fail() { echo "  FAIL  $1"; FAILS=$((FAILS+1)); }
 
+perms_of() { # $1 = path -> octal mode. BSD/macOS stat first, then GNU.
+  # NOTE: `stat -f` on GNU coreutils means "filesystem status": it prints a
+  # block of text to stdout and THEN fails, so the two forms cannot be chained
+  # with `||` — the garbage lands in the caller's variable and every
+  # permission check reports a false WARN. Capture, then decide.
+  local out
+  if out=$(stat -f "%Lp" "$1" 2>/dev/null) && [ -n "$out" ]; then
+    echo "$out"; return
+  fi
+  stat -c "%a" "$1" 2>/dev/null
+}
+
 json() { # $1 = jq-ish dotted path, best-effort with python3
   python3 -c "
 import json,sys
@@ -31,7 +43,7 @@ echo
 # ── config file ──────────────────────────────────────────────────────────────
 if [ -f "$CFG" ]; then
   pass "config exists ($CFG)"
-  perms=$(stat -f "%Lp" "$CFG" 2>/dev/null || stat -c "%a" "$CFG" 2>/dev/null)
+  perms=$(perms_of "$CFG")
   [ "$perms" = "600" ] && pass "config permissions 600" || warn "config permissions are $perms — run: chmod 600 $CFG"
 else
   fail "no config at $CFG — run the setup wizard (Phase 0 in SKILL.md)"
@@ -48,7 +60,7 @@ P8="${P8/#\~/$HOME}"
 [ -n "$ISSUER_ID" ] && pass "ASC issuer id set" || fail "ASC issuer id missing (asc.issuer_id in config)"
 if [ -f "$P8" ]; then
   pass "ASC private key present"
-  perms=$(stat -f "%Lp" "$P8" 2>/dev/null || stat -c "%a" "$P8" 2>/dev/null)
+  perms=$(perms_of "$P8")
   [ "$perms" = "600" ] && pass "private key permissions 600" || warn "private key permissions are $perms — run: chmod 600 $P8"
 else
   fail "ASC private key not found at $P8"
@@ -76,7 +88,12 @@ case "$ENGINE" in
       if [ "$ENGINE" = "deepseek" ]; then
         # a valid key on an empty account fails every call with HTTP 402 —
         # check the balance BEFORE a long run, not during one
-        bal=$(curl -s -m 10 -H "Authorization: Bearer $(cat "$KEY_PATH")" https://api.deepseek.com/user/balance 2>/dev/null)
+        # the key goes in on stdin, never on an argv — a header passed as
+        # `-H "Authorization: Bearer $(cat …)"` is readable by any local user
+        # via `ps`. The key is never an argument to anything here, not even
+        # to printf, so this holds whether or not printf is a shell builtin.
+        bal=$({ printf 'Authorization: Bearer '; tr -d '\n' < "$KEY_PATH"; printf '\n'; } |
+          curl -s -m 10 -H @- https://api.deepseek.com/user/balance 2>/dev/null)
         if echo "$bal" | grep -q '"is_available":true'; then
           pass "DeepSeek balance available"
         elif [ -n "$bal" ]; then
@@ -99,10 +116,17 @@ command -v ruby >/dev/null && pass "ruby present" || fail "ruby missing (needed 
 command -v python3 >/dev/null && pass "python3 present" || fail "python3 missing"
 
 if command -v fastlane >/dev/null; then
-  v=$(fastlane --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
-  minor=$(echo "$v" | cut -d. -f2)
+  # `fastlane --version` prints an install path, an update nag and gem
+  # versions around the real answer. Grabbing the last version-shaped string
+  # in that blob reports a bystander (a ruby path, the update nag, a gem) --
+  # on a real 2.237.0 install it read "0.9.42" and told the user to upgrade.
+  # Only the line that is exactly "fastlane <x.y.z>" is the version.
+  v=$(fastlane --version 2>/dev/null | grep -oE '^fastlane [0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $2}')
   major=$(echo "$v" | cut -d. -f1)
-  if [ "${major:-0}" -gt 2 ] || { [ "${major:-0}" -eq 2 ] && [ "${minor:-0}" -ge 234 ]; }; then
+  minor=$(echo "$v" | cut -d. -f2)
+  if [ -z "$v" ]; then
+    warn "fastlane present but its version could not be parsed — confirm it is ≥ 2.234.0 by hand"
+  elif [ "${major:-0}" -gt 2 ] || { [ "${major:-0}" -eq 2 ] && [ "${minor:-0}" -ge 234 ]; }; then
     pass "fastlane $v (locale list is current)"
   else
     warn "fastlane $v is older than 2.234.0 — its App Store locale list is missing newer locales; brew upgrade fastlane"
@@ -116,8 +140,25 @@ RENDERER="$(cd "$(dirname "$0")/../renderer" 2>/dev/null && pwd)"
 if [ -n "$RENDERER" ]; then
   command -v node >/dev/null && pass "node present" || warn "node missing — needed only for screenshot rendering"
   [ -d "$RENDERER/node_modules/playwright" ] && pass "renderer deps installed" || warn "renderer deps missing — run: cd $RENDERER && npm install && npx playwright install chromium"
+  # Count AND validate. An interrupted download from before fetch_fonts.sh
+  # grew its .part handling can leave 18 files with one truncated font: the
+  # count passes, and the renderer fails on it later with no hint why.
   n_fonts=$(ls "$RENDERER/fonts/"*.ttf 2>/dev/null | wc -l | tr -d ' ')
-  [ "$n_fonts" -ge 18 ] && pass "renderer fonts fetched ($n_fonts files)" || warn "renderer fonts not fetched — run: $RENDERER/fetch_fonts.sh"
+  if [ "$n_fonts" -lt 18 ]; then
+    warn "renderer fonts not fetched — run: $RENDERER/fetch_fonts.sh"
+  else
+    # reuse the renderer's own definition rather than restating it here
+    eval "$(sed -n '/^be()/,/^}/p;/^is_font()/,/^}/p' "$RENDERER/fetch_fonts.sh")"
+    damaged=""
+    for f in "$RENDERER/fonts/"*.ttf; do
+      is_font "$f" || damaged="$damaged $(basename "$f")"
+    done
+    if [ -n "$damaged" ]; then
+      fail "damaged font file(s):$damaged — delete them and re-run: $RENDERER/fetch_fonts.sh"
+    else
+      pass "renderer fonts fetched and valid ($n_fonts files)"
+    fi
+  fi
 fi
 
 echo
