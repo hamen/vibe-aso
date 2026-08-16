@@ -8,13 +8,16 @@
 # Usage: ruby asc.rb GET '/v1/apps?limit=200'
 #        ruby asc.rb PATCH /v1/appInfoLocalizations/<id> '{"data":{...}}'
 #
-# Exit status: 0 on a 2xx, 1 on any other HTTP status, 2 if the request never
-# completed (timeout, DNS, TLS). The response is always printed either way.
+# Exit status: 0 on a 2xx; 1 on any other HTTP status, and on a usage error
+# (bad method, bad path, missing credentials); 2 if the request never completed
+# (timeout, DNS, TLS). On 0 and 1 the response is printed; usage errors and
+# transport errors report on stderr.
 require 'openssl'
 require 'base64'
 require 'json'
 require 'net/http'
 require 'uri'
+require 'timeout'
 
 CONFIG_PATH = File.expand_path('~/.vibe-aso/config.json')
 
@@ -54,22 +57,38 @@ METHODS = {
   'PATCH' => Net::HTTP::Patch, 'DELETE' => Net::HTTP::Delete
 }.freeze
 
+HOST = 'api.appstoreconnect.apple.com'
+DEADLINE = Integer(ENV['ASC_DEADLINE'] || 120) # total seconds for the request
+
 method, path, body = ARGV[0], ARGV[1], ARGV[2]
 abort "usage: ruby asc.rb <GET|POST|PATCH|DELETE> <path> [json_body]" unless method && path
 klass = METHODS[method.upcase] || abort("unsupported method #{method} — use one of #{METHODS.keys.join(', ')}")
 begin
-  uri = URI("https://api.appstoreconnect.apple.com#{path}")
+  uri = URI("https://#{HOST}#{path}")
 rescue URI::InvalidURIError => e
   abort "bad path #{path.inspect}: #{e.message}"
 end
+# The path is interpolated into the URL, so it can move the request off Apple.
+# "@evil.example/v1/apps" parses with host evil.example and userinfo
+# api.appstoreconnect.apple.com — and the Bearer below is a LIVE signed ASC
+# token. Refuse anything that did not stay on Apple's host over TLS.
+unless uri.scheme == 'https' && uri.host == HOST && uri.userinfo.nil?
+  abort "refusing to send credentials to #{uri.scheme}://#{uri.host} — path must start with '/'"
+end
+
 req = klass.new(uri)
 req['Authorization'] = "Bearer #{jwt}"
 req['Content-Type']  = 'application/json'
 req.body = body if body
 
 begin
-  res = Net::HTTP.start(uri.host, uri.port,
-                        use_ssl: true, open_timeout: 15, read_timeout: 90) { |h| h.request(req) }
+  # read_timeout bounds each individual read, not the whole exchange: a server
+  # that dribbles a byte every 89s would keep this alive forever. Timeout.timeout
+  # puts a ceiling on the total.
+  res = Timeout.timeout(DEADLINE, nil, "request exceeded #{DEADLINE}s") do
+    Net::HTTP.start(uri.host, uri.port, use_ssl: true,
+                    open_timeout: 15, read_timeout: 90, write_timeout: 90) { |h| h.request(req) }
+  end
 rescue StandardError => e
   # a hung connection must not hang the caller's shell forever
   warn "request failed: #{e.class}: #{e.message}"
