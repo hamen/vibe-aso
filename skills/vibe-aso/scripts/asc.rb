@@ -7,6 +7,9 @@
 #
 # Usage: ruby asc.rb GET '/v1/apps?limit=200'
 #        ruby asc.rb PATCH /v1/appInfoLocalizations/<id> '{"data":{...}}'
+#
+# Exit status: 0 on a 2xx, 1 on any other HTTP status, 2 if the request never
+# completed (timeout, DNS, TLS). The response is always printed either way.
 require 'openssl'
 require 'base64'
 require 'json'
@@ -46,17 +49,40 @@ def jwt
   "#{signing_input}.#{b64(r + s)}"
 end
 
+METHODS = {
+  'GET' => Net::HTTP::Get, 'POST' => Net::HTTP::Post,
+  'PATCH' => Net::HTTP::Patch, 'DELETE' => Net::HTTP::Delete
+}.freeze
+
 method, path, body = ARGV[0], ARGV[1], ARGV[2]
 abort "usage: ruby asc.rb <GET|POST|PATCH|DELETE> <path> [json_body]" unless method && path
-uri = URI("https://api.appstoreconnect.apple.com#{path}")
-req = Object.const_get("Net::HTTP::#{method.capitalize}").new(uri)
+klass = METHODS[method.upcase] || abort("unsupported method #{method} — use one of #{METHODS.keys.join(', ')}")
+begin
+  uri = URI("https://api.appstoreconnect.apple.com#{path}")
+rescue URI::InvalidURIError => e
+  abort "bad path #{path.inspect}: #{e.message}"
+end
+req = klass.new(uri)
 req['Authorization'] = "Bearer #{jwt}"
 req['Content-Type']  = 'application/json'
 req.body = body if body
-res = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
+
+begin
+  res = Net::HTTP.start(uri.host, uri.port,
+                        use_ssl: true, open_timeout: 15, read_timeout: 90) { |h| h.request(req) }
+rescue StandardError => e
+  # a hung connection must not hang the caller's shell forever
+  warn "request failed: #{e.class}: #{e.message}"
+  exit 2
+end
+
 puts "HTTP #{res.code}"
 begin
   puts JSON.pretty_generate(JSON.parse(res.body)) if res.body && !res.body.empty?
 rescue StandardError
   puts res.body
 end
+
+# exit non-zero on anything that is not 2xx, so a caller can chain on it
+# instead of parsing this script's stdout
+exit 1 unless res.is_a?(Net::HTTPSuccess)
