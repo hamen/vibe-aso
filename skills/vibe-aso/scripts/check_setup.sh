@@ -140,8 +140,25 @@ RENDERER="$(cd "$(dirname "$0")/../renderer" 2>/dev/null && pwd)"
 if [ -n "$RENDERER" ]; then
   command -v node >/dev/null && pass "node present" || warn "node missing — needed only for screenshot rendering"
   [ -d "$RENDERER/node_modules/playwright" ] && pass "renderer deps installed" || warn "renderer deps missing — run: cd $RENDERER && npm install && npx playwright install chromium"
+  # Count AND validate. An interrupted download from before fetch_fonts.sh
+  # grew its .part handling can leave 18 files with one truncated font: the
+  # count passes, and the renderer fails on it later with no hint why.
   n_fonts=$(ls "$RENDERER/fonts/"*.ttf 2>/dev/null | wc -l | tr -d ' ')
-  [ "$n_fonts" -ge 18 ] && pass "renderer fonts fetched ($n_fonts files)" || warn "renderer fonts not fetched — run: $RENDERER/fetch_fonts.sh"
+  if [ "$n_fonts" -lt 18 ]; then
+    warn "renderer fonts not fetched — run: $RENDERER/fetch_fonts.sh"
+  else
+    # reuse the renderer's own definition rather than restating it here
+    eval "$(sed -n '/^be()/,/^}/p;/^is_font()/,/^}/p' "$RENDERER/fetch_fonts.sh")"
+    damaged=""
+    for f in "$RENDERER/fonts/"*.ttf; do
+      is_font "$f" || damaged="$damaged $(basename "$f")"
+    done
+    if [ -n "$damaged" ]; then
+      fail "damaged font file(s):$damaged — delete them and re-run: $RENDERER/fetch_fonts.sh"
+    else
+      pass "renderer fonts fetched and valid ($n_fonts files)"
+    fi
+  fi
 fi
 
 echo

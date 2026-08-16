@@ -212,6 +212,28 @@ like "$(cat "$WORK/bin/curl.stdin")" "sk-secret-key-value" "key is delivered on 
 rm -f "$WORK/bin/curl"
 
 echo
+echo "check_setup.sh — font validation"
+
+# 18 files present but one truncated: the count alone reports PASS and the
+# renderer then fails later with no explanation.
+H4=$(new_home)
+FDIR="$WORK/renderer_fonts"; mkdir -p "$FDIR"
+i=0; while [ "$i" -lt 18 ]; do make_font "$FDIR/Font$i.ttf"; i=$((i+1)); done
+# check_setup.sh looks next to itself, so run a copy in a matching layout
+LAYOUT="$WORK/layout"; mkdir -p "$LAYOUT/scripts" "$LAYOUT/renderer"
+cp "$CHECK" "$LAYOUT/scripts/"; cp "$FETCH" "$LAYOUT/renderer/"
+cp -r "$FDIR" "$LAYOUT/renderer/fonts"
+
+out=$(HOME="$H4" PATH="$WORK/bin:$PATH" bash "$LAYOUT/scripts/check_setup.sh" 2>&1)
+like "$out" "renderer fonts fetched and valid (18 files)" "18 good fonts pass"
+
+head -c 20 "$LAYOUT/renderer/fonts/Font7.ttf" > "$LAYOUT/renderer/fonts/Font7.tmp"
+mv "$LAYOUT/renderer/fonts/Font7.tmp" "$LAYOUT/renderer/fonts/Font7.ttf"
+out=$(HOME="$H4" PATH="$WORK/bin:$PATH" bash "$LAYOUT/scripts/check_setup.sh" 2>&1)
+like "$out" "damaged font file(s): Font7.ttf" "a truncated font among 18 is reported by name"
+unlike "$out" "fonts fetched and valid" "a damaged font does not pass the check"
+
+echo
 if [ "$FAIL" -eq 0 ]; then
   echo "all $PASS test(s) passed"
 else
